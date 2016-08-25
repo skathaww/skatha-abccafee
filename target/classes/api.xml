@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:jms="http://www.mulesoft.org/schema/mule/jms" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:twitter="http://www.mulesoft.org/schema/mule/twitter" xmlns:sfdc="http://www.mulesoft.org/schema/mule/sfdc" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd
+http://www.mulesoft.org/schema/mule/sfdc http://www.mulesoft.org/schema/mule/sfdc/current/mule-sfdc.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/twitter http://www.mulesoft.org/schema/mule/twitter/current/mule-twitter.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd">
+    <http:listener-config name="api-httpListenerConfig" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/>
+    <apikit:config name="api-config" raml="api.raml" consoleEnabled="false" doc:name="Router"/>
+    <sfdc:config name="Salesforce__Basic_Authentication" username="${sfdc.user}" password="${sfdc.pwd}" securityToken="${sfdc.token}" doc:name="Salesforce: Basic Authentication"/>
+    <db:mysql-config name="MySQL_Configuration" host="${db.host}" port="${db.port}" user="${db.user}" password="${db.pwd}" database="training" doc:name="MySQL Configuration"/>
+    <twitter:config name="Twitter__Configuration" accessKey="${twitter.accesskey}" accessSecret="${twitter.accesssecret}" consumerKey="${twitter.consumerkey}" consumerSecret="${twitter.consumersecret}" doc:name="Twitter: Configuration"/>
+    <jms:activemq-connector name="Active_MQ" username="${mq.user}" password="${mq.pwd}" brokerURL="tcp://localhost:61616" validateConnections="true" doc:name="Active MQ"/>
+    <flow name="api-main">
+        <http:listener config-ref="api-httpListenerConfig" path="/api/*" doc:name="HTTP"/>
+        <apikit:router config-ref="api-config" doc:name="APIkit Router"/>
+        <exception-strategy ref="api-apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
+    </flow>
+    <flow name="api-console">
+        <http:listener config-ref="api-httpListenerConfig" path="/console/*" doc:name="HTTP"/>
+        <apikit:console config-ref="api-config" doc:name="APIkit Console"/>
+    </flow>
+    <flow name="get:/billTo:api-config">
+        <sfdc:query config-ref="Salesforce__Basic_Authentication" query="dsql:SELECT Account_Status_Code__c,Analysis_Code1__c,Last_Date__c,Name,No__c,Phone__c,Sales_Person_Code__c FROM Bill_to_ks__c" doc:name="Salesforce"/>
+        <dw:transform-message metadata:id="83ae8c09-7c56-4e07-bbce-71442563c092" doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	sales_person:payload01.Sales_Person_Code__c,
+	lastdate:payload01.Last_Date__c,
+	phoneNo:payload01.Phone__c,
+	AccountStatus:payload01.Account_Status_Code__c,
+	No:payload01.No__c,
+	Name:payload01.Name,
+	Analysiscode:payload01.Analysis_Code1__c
+	
+})]]></dw:set-payload>
+        </dw:transform-message>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <foreach doc:name="For Each">
+            <enricher doc:name="Message Enricher">
+                <db:select config-ref="MySQL_Configuration" doc:name="Check data exist">
+                    <db:parameterized-query><![CDATA[SELECT * FROM Bill_to_ks B WHERE B.NO=#[payload.No]]]></db:parameterized-query>
+                </db:select>
+                <enrich source="#[payload.size()&gt;0]" target="#[flowVars['exist']]"/>
+            </enricher>
+            <logger message="bill ot list size #[payload.size()] and #[flowVars.exist] and data will be #[payload]" level="INFO" doc:name="Logger"/>
+            <set-variable variableName="flag" value="default" doc:name="Variable"/>
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.exist==false]">
+                    <logger message="#[payload]" level="INFO" doc:name="payload logger"/>
+                    <db:insert config-ref="MySQL_Configuration" doc:name="Insert data">
+                        <db:parameterized-query><![CDATA[INSERT INTO `training`.Bill_to_ks (No,Name,Phone_No,Account_Status_Code,Last_Date_Modified,Analysis_Code_1,Sales_Person_Code) VALUES(#[payload.No],#[payload.Name],#[payload.phoneNo],#[payload.AccountStatus],#[payload.lastdate],#[payload.Analysiscode],#[payload.sales_person])]]></db:parameterized-query>
+                    </db:insert>
+                    <logger message="Bill to data inserted successfuly" level="INFO" doc:name="Logger"/>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Bill to ks data inserted succesfuly in Database!!']]]></expression-component>
+                </when>
+                <otherwise>
+                    <logger message="data already exist or data not available" level="INFO" doc:name="Logger"/>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Bill to ks data already available in Database!!']]]></expression-component>
+                </otherwise>
+            </choice>
+
+        </foreach>
+        <logger message="#[flowVars.flag] time  #[server.dateTime]" level="INFO" doc:name="Logger"/>
+        <twitter:update-status config-ref="Twitter__Configuration" status="#[flowVars.flag+' '+server.dateTime]" doc:name="Twitter"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+
+
+    </flow>
+    <flow name="get:/machines:api-config">
+		  <sfdc:query config-ref="Salesforce__Basic_Authentication" query="dsql:SELECT Concession_Unit_Type__c,Customer_No__c,Installed_Date__c,Location_of_Service_Item__c,Name,No__c FROM Machines_ks__c" doc:name="Salesforce"/>
+        <dw:transform-message metadata:id="bf06457f-e236-4d10-90a4-1a5049c3aa33" doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	No: payload01.No__c,
+	Name: payload01.Name,
+	ConcessionUnit:payload01.Concession_Unit_Type__c,
+	CustNo:payload01.Customer_No__c,
+	LocOfService:payload01.Location_of_Service_Item__c,
+	InstalledDate:payload01.Installed_Date__c
+})]]></dw:set-payload>
+        </dw:transform-message>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <foreach doc:name="For Each">
+            <enricher doc:name="Message Enricher">
+                <db:select config-ref="MySQL_Configuration" doc:name="check machines to data exist or not">
+                    <db:parameterized-query><![CDATA[SELECT * FROM Machine_ks where no=#[payload.No]]]></db:parameterized-query>
+
+                </db:select>
+                <enrich source="#[payload.size()&gt;0]" target="#[flowVars['exist']]"/>
+            </enricher>
+            <logger message="#[payload] and #[flowVars['exist']]" level="INFO" doc:name="Logger"/>
+            <set-variable variableName="flag" value="default" doc:name="Flag Variable"/>
+
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.exist==false]">
+                    <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+                    <db:insert config-ref="MySQL_Configuration" doc:name="Insert machine to Data">
+                        <db:parameterized-query><![CDATA[INSERT INTO `training`.Machine_ks (No,Machine_Code_Type,Concession_Unit_Type,Customer_No,Location_of_service_item,Installed_Date) VALUES(#[payload.No],#[payload.Name],#[payload.ConcessionUnit],#[payload.CustNo],#[payload.LocOfService],#[payload.InstalledDate])]]></db:parameterized-query>
+
+                    </db:insert>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Machine ks data inserted successfuly in Database!!!']]]></expression-component>
+                </when>
+                <otherwise>
+                    <logger message="data already available!!!" level="INFO" doc:name="Logger"/>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Machine ks data already available in Database']]]></expression-component>
+                </otherwise>
+            </choice>
+        </foreach>
+        <logger message="#[flowVars.flag]" level="INFO" doc:name="Logger"/>
+        <twitter:update-status config-ref="Twitter__Configuration" status="#[flowVars.flag+' '+server.dateTime]" doc:name="Twitter"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+    </flow>
+    <flow name="get:/sellTo:api-config">
+        <sfdc:query config-ref="Salesforce__Basic_Authentication" query="dsql:SELECT Account_Status_Code__c,Address_2__c,Address__c,Analysis_Code_1__c,Analysis_Code_2__c,Bill_to_Customer_Number__c,City__c,Contact__c,Country__c,County__c,Last_Date_Modified__c,Name,No__c,Phone_Number__c,PostCode__c,Price_Card_Code__c,Salesperson_Code__c FROM Sell_to_ks__c" doc:name="Salesforce"/>
+        <dw:transform-message metadata:id="bf06457f-e236-4d10-90a4-1a5049c3aa33" doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	No: payload01.No__c,
+	Name: payload01.Name,
+	Address:payload01.Address__c,
+	Address_2:payload01.Address_2__c,
+	city:payload01.City__c,
+	country:payload01.Country__c,
+	county:payload01.County__c,
+	postcode:payload01.PostCode__c,
+	phone_no:payload01.Phone_Number__c,
+	contract:payload01.Contact__c,
+	AccntStatuscode:payload01.Account_Status_Code__c,
+	billtocustNo:payload01.Bill_to_Customer_Number__c,
+	salespersncode:payload01.Salesperson_Code__c,
+	analysiscode_1:payload01.Analysis_Code_1__c,
+	analysiscode_2:payload01.Analysis_Code_2__c,
+	lastdatemodfy:payload01.Last_Date_Modified__c,
+	pricecardcode:payload01.Price_Card_Code__c
+	
+})]]></dw:set-payload>
+        </dw:transform-message>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <foreach doc:name="For Each">
+            <enricher doc:name="Message Enricher">
+                <db:select config-ref="MySQL_Configuration" doc:name="check sell to data exist or not">
+                    <db:parameterized-query><![CDATA[select * from Sell_to_ks where no=#[payload.No]]]></db:parameterized-query>
+                </db:select>
+                <enrich source="#[payload.size()&gt;0]" target="#[flowVars['exist']]"/>
+            </enricher>
+            <logger message="#[payload] and #[flowVars['exist']]" level="INFO" doc:name="Logger"/>
+            <set-variable variableName="flag" value="default" doc:name="Flag Variable"/>
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.exist==false]">
+                    <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+                    <db:insert config-ref="MySQL_Configuration" doc:name="Insert sell to Data">
+                        <db:parameterized-query><![CDATA[INSERT INTO `training`.Sell_to_ks (No,Name,Address,Address_2,City,County,Postcode,Country,Phone_Number,contact,Account_Status_Code,Bill_to_Customer_Number,Sales_Person_Code,Analysis_code_1,Analysis_code_2,Last_Date_Modified,Price_card_code) VALUES(#[payload.No],#[payload.Name],#[payload.Address],#[payload.Address_2],#[payload.city],#[payload.county],#[payload.postcode],#[payload.country],#[payload.phone_no],#[payload.contract],#[payload.AccntStatuscode],#[payload.billtocustNo],#[payload.salespersncode],#[payload.analysiscode_1],#[payload.analysiscode_2],#[payload.lastdatemodfy],#[payload.pricecardcode])]]></db:parameterized-query>
+                    </db:insert>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Sell to ks data inserted successfuly in Database!!!']]]></expression-component>
+                </when>
+                <otherwise>
+                    <logger message="data already available!!!" level="INFO" doc:name="Logger"/>
+                    <expression-component doc:name="Expression"><![CDATA[#[flowVars.flag='Sell to ks data already available in Database']]]></expression-component>
+                </otherwise>
+            </choice>
+        </foreach>
+        <logger message="#[flowVars.flag]" level="INFO" doc:name="Logger"/>
+        <twitter:update-status config-ref="Twitter__Configuration" status="#[flowVars.flag+' '+server.dateTime]" doc:name="Twitter"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+
+    </flow>
+    <flow name="get:/jms:api-config">
+        <db:select config-ref="MySQL_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[select * from Machine_ks]]></db:parameterized-query>
+        </db:select>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+        <jms:outbound-endpoint queue="testing" connector-ref="Active_MQ" doc:name="JMS"/>
+        <logger message="after queue--- #[payload]" level="INFO" doc:name="Logger"/>
+        <set-payload value="#[payload]" doc:name="Set Payload"/>
+    </flow>
+    <flow name="get:/jmsrc:api-config">
+        <jms:inbound-endpoint queue="testing" connector-ref="Active_MQ" doc:name="JMS"/>
+
+        <logger message="recieved from queue #[payload]" level="INFO" doc:name="Logger"/>
+        <set-payload value="#[payload]" doc:name="Set Payload"/>
+    </flow>
+    <apikit:mapping-exception-strategy name="api-apiKitGlobalExceptionMapping">
+        <apikit:mapping statusCode="404">
+            <apikit:exception value="org.mule.module.apikit.exception.NotFoundException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Resource not found&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="405">
+            <apikit:exception value="org.mule.module.apikit.exception.MethodNotAllowedException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Method not allowed&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="415">
+            <apikit:exception value="org.mule.module.apikit.exception.UnsupportedMediaTypeException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Unsupported media type&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="406">
+            <apikit:exception value="org.mule.module.apikit.exception.NotAcceptableException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Not acceptable&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="400">
+            <apikit:exception value="org.mule.module.apikit.exception.BadRequestException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Bad request&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+    </apikit:mapping-exception-strategy>
+
+</mule>

@@ -1,0 +1,79 @@
+#%RAML 0.8
+title: katha-abccafe
+version: 0.1
+baseUri: http://localhost:8081/api
+/billTo:
+  displayName: Bill To Data
+  description : | 
+    Insert Bill To data in to database from sales force
+  get:
+    description: |
+      inserting bill to data into Database
+    responses:
+     200:
+       body:
+          application/json:
+           example: |
+             {
+                "message","Bill to data inserted successfully"
+             } 
+/sellTo:
+  displayName: Sell to data
+  description: |
+    sell to data into database
+  get:
+    description: |
+      Insert salesforce sell to data in to database sell to table
+    responses:
+      200:
+        body:
+         application/json:
+          example: |
+            {
+              "message","Sell to data inserted succesfully"
+            }
+/machines:
+  displayName: Machines data 
+  description: |
+    Machines data insertion in database
+  get:
+    description: |
+      Inserting Salesforce machine data into database
+    responses:
+      200:
+        body:
+          application/json:
+            example: |
+              {
+                "message","Machines Data inserted succesfully"
+              }
+/jms:
+  displayName: machine to jms 
+  description: |
+    Machines data will push to jms
+  get:
+    description: |
+      Machine data will push to jms
+    responses:
+      200:
+        body:
+          application/json:
+            example: |
+              {
+                "message","Machine data push successfully"
+              }
+/jmsrc:
+  displayName: Recieved from jms 
+  description: |
+    Recieved from Jms
+  get:
+    description: |
+      Recieved from JMS
+    responses:
+      200:
+        body:
+          application/json:
+            example: |
+              {
+                "message","Data recieved from JMS"
+              }
